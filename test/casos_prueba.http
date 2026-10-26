@@ -1,0 +1,932 @@
+### ==============================================================================
+### TRABAJO PRÁCTICO INTEGRATORIO: TALLER MECÁNICO
+### CASOS DE PRUEBA C-01 A C-19 (REST CLIENT)
+### Nota: Antes de ejecutar las pruebas de cada sección, ejecutar: python seed.py
+### ==============================================================================
+
+@baseUrl = http://localhost:8000
+
+### ------------------------------------------------------------------------------
+### CASO C-01: Parámetro de ruta que no es entero, con la sesión iniciada
+### Resultado esperado: 422, sin ejecutar el handler
+### ------------------------------------------------------------------------------
+
+# @name loginAdminC01
+POST {{baseUrl}}/auth/login
+Content-Type: application/json
+
+{
+  "email": "admin@example.com",
+  "password": "Password123!"
+}
+
+###
+
+# @no-cookie-jar
+GET {{baseUrl}}/usuarios/no_es_entero/roles
+Cookie: {{loginAdminC01.response.headers.Set-Cookie}}
+
+# Respuesta esperada:
+# HTTP/1.1 422 Unprocessable Entity
+# Content-Type: application/json
+# {
+#   "detail": "Input should be a valid integer, unable to parse string as an integer"
+# }
+
+
+### ------------------------------------------------------------------------------
+### CASO C-02: Registro; correo y documento repetidos
+### Resultado esperado: 201; 409 con mensaje propio, y no deja ninguna fila suelta
+### ------------------------------------------------------------------------------
+
+# 1. Registro exitoso (201)
+POST {{baseUrl}}/auth/registro
+Content-Type: application/json
+
+{
+  "email": "c02_cliente@example.com",
+  "nombre": "Cliente Prueba C02",
+  "password": "Password123!",
+  "documento": "45000111",
+  "telefono": "1133445566"
+}
+
+# Respuesta esperada:
+# HTTP/1.1 201 Created
+# {
+#   "id": 8,
+#   "email": "c02_cliente@example.com",
+#   "nombre": "Cliente Prueba C02",
+#   "activo": true,
+#   "debe_cambiar_password": false
+# }
+
+###
+
+# 2. Correo repetido (409)
+POST {{baseUrl}}/auth/registro
+Content-Type: application/json
+
+{
+  "email": "c02_cliente@example.com",
+  "nombre": "Otro Cliente",
+  "password": "Password123!",
+  "documento": "99999999",
+  "telefono": "1199887766"
+}
+
+# Respuesta esperada:
+# HTTP/1.1 409 Conflict
+# {
+#   "detail": "El correo electrónico ya se encuentra registrado"
+# }
+
+###
+
+# 3. Documento repetido (409)
+POST {{baseUrl}}/auth/registro
+Content-Type: application/json
+
+{
+  "email": "otro_mail_c02@example.com",
+  "nombre": "Otro Cliente 2",
+  "password": "Password123!",
+  "documento": "45000111",
+  "telefono": "1199887766"
+}
+
+# Respuesta esperada:
+# HTTP/1.1 409 Conflict
+# {
+#   "detail": "El documento ya pertenece a un cliente del taller"
+# }
+
+
+### ------------------------------------------------------------------------------
+### CASO C-03: La cookie del login
+### Resultado esperado: Set-Cookie con HttpOnly, SameSite=Lax y Max-Age;
+### cuerpo sin token; sin cookie o con Authorization: Bearer -> 401
+### ------------------------------------------------------------------------------
+
+# @name loginC03
+POST {{baseUrl}}/auth/login
+Content-Type: application/json
+
+{
+  "email": "admin@example.com",
+  "password": "Password123!"
+}
+
+# Respuesta esperada:
+# HTTP/1.1 200 OK
+# Set-Cookie: access_token=...; Max-Age=1800; Path=/; SameSite=lax; HttpOnly
+# {
+#   "mensaje": "Sesión iniciada",
+#   "debe_cambiar_password": false,
+#   "expira_en_segundos": 1800
+# }
+
+###
+
+# Sin cookie -> 401
+# @no-cookie-jar
+GET {{baseUrl}}/usuarios/1/roles
+
+# Respuesta esperada:
+# HTTP/1.1 401 Unauthorized
+# {
+#   "detail": "No autenticado: falta cookie de sesión"
+# }
+
+###
+
+# Con cabecera Authorization: Bearer en lugar de cookie -> 401
+# @no-cookie-jar
+GET {{baseUrl}}/usuarios/1/roles
+Authorization: Bearer un_token_inventado
+
+# Respuesta esperada:
+# HTTP/1.1 401 Unauthorized
+# {
+#   "detail": "No autenticado: falta cookie de sesión"
+# }
+
+
+### ------------------------------------------------------------------------------
+### CASO C-04: Correo existente con contraseña mala, y correo inexistente
+### Resultado esperado: 401 con el mismo cuerpo y un tiempo parecido
+### ------------------------------------------------------------------------------
+
+# 1. Correo existente con clave incorrecta
+POST {{baseUrl}}/auth/login
+Content-Type: application/json
+
+{
+  "email": "admin@example.com",
+  "password": "PasswordIncorrecta!"
+}
+
+# Respuesta esperada:
+# HTTP/1.1 401 Unauthorized
+# {
+#   "detail": "Credenciales incorrectas"
+# }
+
+###
+
+# 2. Correo inexistente
+POST {{baseUrl}}/auth/login
+Content-Type: application/json
+
+{
+  "email": "no_existe_usuario@example.com",
+  "password": "PasswordIncorrecta!"
+}
+
+# Respuesta esperada:
+# HTTP/1.1 401 Unauthorized
+# {
+#   "detail": "Credenciales incorrectas"
+# }
+
+
+### ------------------------------------------------------------------------------
+### CASO C-05: Seis intentos fallidos seguidos
+### Resultado esperado: El sexto, 429 con Retry-After y en pocos ms; 5 en intento_acceso
+### ------------------------------------------------------------------------------
+
+POST {{baseUrl}}/auth/login
+Content-Type: application/json
+
+{ "email": "brute_force@example.com", "password": "WrongPassword!" }
+
+###
+POST {{baseUrl}}/auth/login
+Content-Type: application/json
+
+{ "email": "brute_force@example.com", "password": "WrongPassword!" }
+
+###
+POST {{baseUrl}}/auth/login
+Content-Type: application/json
+
+{ "email": "brute_force@example.com", "password": "WrongPassword!" }
+
+###
+POST {{baseUrl}}/auth/login
+Content-Type: application/json
+
+{ "email": "brute_force@example.com", "password": "WrongPassword!" }
+
+###
+POST {{baseUrl}}/auth/login
+Content-Type: application/json
+
+{ "email": "brute_force@example.com", "password": "WrongPassword!" }
+
+###
+
+# 6to intento consecutivo fallido -> 429 con Retry-After
+POST {{baseUrl}}/auth/login
+Content-Type: application/json
+
+{ "email": "brute_force@example.com", "password": "WrongPassword!" }
+
+# Respuesta esperada:
+# HTTP/1.1 429 Too Many Requests
+# Retry-After: 60
+# {
+#   "detail": "Demasiados intentos fallidos. Intente nuevamente en 60 segundos."
+# }
+
+
+### ------------------------------------------------------------------------------
+### CASO C-06: 401 contra 403, y lo propio
+### Resultado esperado: Sin rol 403; cliente ve su orden (200) y no la ajena (403)
+### ------------------------------------------------------------------------------
+
+# @name loginLauraC06
+POST {{baseUrl}}/auth/login
+Content-Type: application/json
+
+{
+  "email": "cliente@example.com",
+  "password": "Password123!"
+}
+
+###
+
+# Cliente intenta acceder a ruta de administración -> 403
+# @no-cookie-jar
+GET {{baseUrl}}/eventos
+Cookie: {{loginLauraC06.response.headers.Set-Cookie}}
+
+# Respuesta esperada:
+# HTTP/1.1 403 Forbidden
+
+###
+
+# Cliente consulta su propia orden (Orden 1, del auto de Laura) -> 200
+# @no-cookie-jar
+GET {{baseUrl}}/ordenes/1
+Cookie: {{loginLauraC06.response.headers.Set-Cookie}}
+
+# Respuesta esperada:
+# HTTP/1.1 200 OK
+# { "id": 1, "estado": "PENDIENTE", "cliente": "Laura Cliente", ... }
+
+###
+
+# Cliente consulta orden ajena (Orden 2, del auto de Jorge) -> 403
+# @no-cookie-jar
+GET {{baseUrl}}/ordenes/2
+Cookie: {{loginLauraC06.response.headers.Set-Cookie}}
+
+# Respuesta esperada:
+# HTTP/1.1 403 Forbidden
+# { "detail": "No tiene permiso para ver esta orden de trabajo" }
+
+
+### ------------------------------------------------------------------------------
+### CASO C-07: Revocar un rol con la sesión abierta; vencimientos inválidos
+### Resultado esperado: Misma cookie da 403 en siguiente petición; /auth/yo muestra
+### la diferencia; fila revocada sigue. Vencimiento inválido -> 422
+### ------------------------------------------------------------------------------
+
+# @name loginRecepcionC07
+POST {{baseUrl}}/auth/login
+Content-Type: application/json
+
+{
+  "email": "recepcion@example.com",
+  "password": "Password123!"
+}
+
+###
+
+# @name loginAdminC07
+POST {{baseUrl}}/auth/login
+Content-Type: application/json
+
+{
+  "email": "admin@example.com",
+  "password": "Password123!"
+}
+
+###
+
+# Recepción crea cliente con éxito -> 201
+# @no-cookie-jar
+POST {{baseUrl}}/clientes
+Content-Type: application/json
+Cookie: {{loginRecepcionC07.response.headers.Set-Cookie}}
+
+{
+  "nombre": "Cliente Test C07",
+  "documento": "99001122",
+  "telefono": "11998877"
+}
+
+###
+
+# Admin revoca el rol RECEPCION al usuario 3 (recepcion) -> 200
+# @no-cookie-jar
+DELETE {{baseUrl}}/usuarios/3/roles/RECEPCION
+Cookie: {{loginAdminC07.response.headers.Set-Cookie}}
+
+# Respuesta esperada:
+# HTTP/1.1 200 OK
+# { "mensaje": "Rol RECEPCION revocado exitosamente" }
+
+###
+
+# Recepción intenta crear otro cliente con su sesión abierta -> 403
+# @no-cookie-jar
+POST {{baseUrl}}/clientes
+Content-Type: application/json
+Cookie: {{loginRecepcionC07.response.headers.Set-Cookie}}
+
+{
+  "nombre": "Cliente Rechazado",
+  "documento": "99001133",
+  "telefono": "11998877"
+}
+
+# Respuesta esperada:
+# HTTP/1.1 403 Forbidden
+
+###
+
+# /auth/yo muestra la diferencia (en token figura, en base no)
+# @no-cookie-jar
+GET {{baseUrl}}/auth/yo
+Cookie: {{loginRecepcionC07.response.headers.Set-Cookie}}
+
+# Respuesta esperada:
+# HTTP/1.1 200 OK
+# {
+#   "usuario": { "id": 3, "email": "recepcion@example.com", ... },
+#   "roles_vigentes": [],
+#   "roles_token": ["RECEPCION"]
+# }
+
+###
+
+# Asignar rol con fecha en el pasado -> 422
+# @no-cookie-jar
+POST {{baseUrl}}/usuarios/3/roles
+Content-Type: application/json
+Cookie: {{loginAdminC07.response.headers.Set-Cookie}}
+
+{
+  "rol": "RECEPCION",
+  "vence_en": "2020-01-01T10:00:00Z"
+}
+
+# Respuesta esperada:
+# HTTP/1.1 422 Unprocessable Entity
+# { "detail": "La fecha de vencimiento debe ser una fecha futura" }
+
+###
+
+# Asignar rol sin zona horaria -> 422
+# @no-cookie-jar
+POST {{baseUrl}}/usuarios/3/roles
+Content-Type: application/json
+Cookie: {{loginAdminC07.response.headers.Set-Cookie}}
+
+{
+  "rol": "RECEPCION",
+  "vence_en": "2030-01-01T10:00:00"
+}
+
+# Respuesta esperada:
+# HTTP/1.1 422 Unprocessable Entity
+# { "detail": "La fecha de vencimiento debe incluir zona horaria" }
+
+
+### ------------------------------------------------------------------------------
+### CASO C-08: Autoprotección del Administrador
+### Resultado esperado: El administrador no se revoca su ADMIN: 409
+### ------------------------------------------------------------------------------
+
+# @name loginAdminC08
+POST {{baseUrl}}/auth/login
+Content-Type: application/json
+
+{
+  "email": "admin@example.com",
+  "password": "Password123!"
+}
+
+###
+
+# Admin 1 (id=1) intenta revocarse a sí mismo -> 409
+# @no-cookie-jar
+DELETE {{baseUrl}}/usuarios/1/roles/ADMIN
+Cookie: {{loginAdminC08.response.headers.Set-Cookie}}
+
+# Respuesta esperada:
+# HTTP/1.1 409 Conflict
+# { "detail": "Un administrador no puede revocarse su propio rol ADMIN" }
+
+
+### ------------------------------------------------------------------------------
+### CASO C-09: Cambio obligatorio de contraseña
+### Resultado esperado: Bloqueado (403) salvo /auth; tras cambio la cookie nueva
+### vale y la anterior 401, sin esperar entre login y cambio
+### ------------------------------------------------------------------------------
+
+# @name loginNuevoC09
+POST {{baseUrl}}/auth/login
+Content-Type: application/json
+
+{
+  "email": "nuevo@example.com",
+  "password": "Password123!"
+}
+
+# Respuesta esperada:
+# { "mensaje": "Sesión iniciada", "debe_cambiar_password": true, ... }
+
+###
+
+# Acceso bloqueado a repuestos -> 403
+# @no-cookie-jar
+GET {{baseUrl}}/repuestos
+Cookie: {{loginNuevoC09.response.headers.Set-Cookie}}
+
+# Respuesta esperada:
+# HTTP/1.1 403 Forbidden
+# { "detail": "Debe cambiar su contraseña antes de continuar" }
+
+###
+
+# Cambio de contraseña exitoso en /auth
+# @name cambioPassC09
+# @no-cookie-jar
+POST {{baseUrl}}/auth/cambiar-password
+Content-Type: application/json
+Cookie: {{loginNuevoC09.response.headers.Set-Cookie}}
+
+{
+  "password_actual": "Password123!",
+  "password_nueva": "NewSecurePass2026!"
+}
+
+# Respuesta esperada:
+# HTTP/1.1 200 OK
+# Set-Cookie: access_token=... (nueva cookie)
+# { "mensaje": "Contraseña cambiada exitosamente" }
+
+###
+
+# La nueva cookie funciona para acceder a repuestos -> 200
+# @no-cookie-jar
+GET {{baseUrl}}/repuestos
+Cookie: {{cambioPassC09.response.headers.Set-Cookie}}
+
+# Respuesta esperada:
+# HTTP/1.1 200 OK
+
+###
+
+# La cookie anterior da 401 de inmediato
+# @no-cookie-jar
+GET {{baseUrl}}/repuestos
+Cookie: {{loginNuevoC09.response.headers.Set-Cookie}}
+
+# Respuesta esperada:
+# HTTP/1.1 401 Unauthorized
+# { "detail": "Sesión expirada por cambio de contraseña" }
+
+
+### ------------------------------------------------------------------------------
+### CASO C-10: Alta de una orden con dos ítems
+### Resultado esperado: 201 con precios copiados, total y primera línea de historial.
+### Con repuesto inexistente -> 409 y la orden no queda creada
+### ------------------------------------------------------------------------------
+
+# @name loginRecepcionC10
+POST {{baseUrl}}/auth/login
+Content-Type: application/json
+
+{
+  "email": "recepcion@example.com",
+  "password": "Password123!"
+}
+
+###
+
+# Alta con 2 ítems -> 201
+# @no-cookie-jar
+POST {{baseUrl}}/ordenes
+Content-Type: application/json
+Cookie: {{loginRecepcionC10.response.headers.Set-Cookie}}
+
+{
+  "vehiculo_id": 2,
+  "falla": "Ruido al frenar",
+  "items": [
+    { "repuesto_id": 2, "cantidad": 1 },
+    { "repuesto_id": 4, "cantidad": 3 }
+  ]
+}
+
+# Respuesta esperada:
+# HTTP/1.1 201 Created
+# {
+#   "id": 3,
+#   "estado": "PENDIENTE",
+#   "patente": "AA123BB",
+#   "total": 68000.00,
+#   "items": [
+#     { "repuesto_id": 2, "codigo": "FRE-010", "precio_unitario": 32000.00, "subtotal": 32000.00 },
+#     { "repuesto_id": 4, "codigo": "ACE-530", "precio_unitario": 12000.00, "subtotal": 36000.00 }
+#   ],
+#   "historial": [
+#     { "desde_estado": null, "hasta_estado": "PENDIENTE", ... }
+#   ]
+# }
+
+###
+
+# Repuesto inexistente -> 409
+# @no-cookie-jar
+POST {{baseUrl}}/ordenes
+Content-Type: application/json
+Cookie: {{loginRecepcionC10.response.headers.Set-Cookie}}
+
+{
+  "vehiculo_id": 2,
+  "falla": "Falla prueba",
+  "items": [
+    { "repuesto_id": 99999, "cantidad": 1 }
+  ]
+}
+
+# Respuesta esperada:
+# HTTP/1.1 409 Conflict
+# { "detail": "El repuesto con id 99999 no existe o está dado de baja" }
+
+
+### ------------------------------------------------------------------------------
+### CASO C-11: Terminar la orden 2, que pide más bujías que las que hay
+### Resultado esperado: 409; estado, stock, movimientos e historial quedan intactos
+### ------------------------------------------------------------------------------
+
+# @name loginMecanicoC11
+POST {{baseUrl}}/auth/login
+Content-Type: application/json
+
+{
+  "email": "mecanico@example.com",
+  "password": "Password123!"
+}
+
+###
+
+# Terminar orden 2 asignada a mecanico -> 409
+# @no-cookie-jar
+POST {{baseUrl}}/ordenes/2/terminar
+Cookie: {{loginMecanicoC11.response.headers.Set-Cookie}}
+
+# Respuesta esperada:
+# HTTP/1.1 409 Conflict
+# { "detail": "Stock insuficiente para el repuesto 'Bujía de encendido'. Stock actual: 2, requerido: 4" }
+
+
+### ------------------------------------------------------------------------------
+### CASO C-12: Reponer y terminar la orden 2
+### Resultado esperado: 200; baja el stock, aparecen movimientos e historial; aviso en registro
+### ------------------------------------------------------------------------------
+
+# @name loginAdminC12
+POST {{baseUrl}}/auth/login
+Content-Type: application/json
+
+{
+  "email": "admin@example.com",
+  "password": "Password123!"
+}
+
+###
+
+# Reponer 10 bujías (repuesto_id=3)
+# @no-cookie-jar
+POST {{baseUrl}}/repuestos/3/reponer
+Content-Type: application/json
+Cookie: {{loginAdminC12.response.headers.Set-Cookie}}
+
+{
+  "cantidad": 10,
+  "motivo": "Reposición de stock"
+}
+
+# Respuesta esperada:
+# HTTP/1.1 200 OK
+# { "id": 3, "codigo": "BUJ-001", "stock": 12, ... }
+
+###
+
+# Terminar orden 2 ahora que hay stock suficiente -> 200
+# @name loginMecC12
+POST {{baseUrl}}/auth/login
+Content-Type: application/json
+
+{
+  "email": "mecanico@example.com",
+  "password": "Password123!"
+}
+
+###
+
+# @no-cookie-jar
+POST {{baseUrl}}/ordenes/2/terminar
+Cookie: {{loginMecC12.response.headers.Set-Cookie}}
+
+# Respuesta esperada:
+# HTTP/1.1 200 OK
+# { "id": 2, "estado": "TERMINADA", ... }
+
+
+### ------------------------------------------------------------------------------
+### CASO C-13: Cancelar orden
+### Resultado esperado: Dueño cancela orden pendiente (200); ajena da 403; terminada 409
+### ------------------------------------------------------------------------------
+
+# @name loginLauraC13
+POST {{baseUrl}}/auth/login
+Content-Type: application/json
+
+{
+  "email": "cliente@example.com",
+  "password": "Password123!"
+}
+
+###
+
+# Laura cancela su orden 1 (PENDIENTE) -> 200
+# @no-cookie-jar
+POST {{baseUrl}}/ordenes/1/cancelar
+Cookie: {{loginLauraC13.response.headers.Set-Cookie}}
+
+# Respuesta esperada:
+# HTTP/1.1 200 OK
+# { "id": 1, "estado": "CANCELADA", ... }
+
+###
+
+# Laura intenta cancelar orden 2 (de Jorge) -> 403
+# @no-cookie-jar
+POST {{baseUrl}}/ordenes/2/cancelar
+Cookie: {{loginLauraC13.response.headers.Set-Cookie}}
+
+# Respuesta esperada:
+# HTTP/1.1 403 Forbidden
+# { "detail": "No tiene permiso para cancelar esta orden" }
+
+
+### ------------------------------------------------------------------------------
+### CASO C-14: UPDATE y DELETE sobre las tres tablas de sólo agregado y estado inexistente
+### (Ver script test/solo_agregado.sql para ejecución directa en psql)
+### ------------------------------------------------------------------------------
+
+
+### ------------------------------------------------------------------------------
+### CASO C-15: Detalle de orden con 2 y con 4 ítems (evitar N+1)
+### (Ver script test/verificar_c15_n_plus_1.py y capturas en README.md)
+### ------------------------------------------------------------------------------
+
+
+### ------------------------------------------------------------------------------
+### CASO C-16: Búsqueda con sql injection; paginación con filtro; PATCH parcial y PATCH de stock
+### ------------------------------------------------------------------------------
+
+# @name loginAdminC16
+POST {{baseUrl}}/auth/login
+Content-Type: application/json
+
+{
+  "email": "admin@example.com",
+  "password": "Password123!"
+}
+
+###
+
+# Búsqueda con ' OR '1'='1 -> Lista vacía con total 0
+# @no-cookie-jar
+GET {{baseUrl}}/repuestos?q=%27%20OR%20%271%27=%271
+Cookie: {{loginAdminC16.response.headers.Set-Cookie}}
+
+# Respuesta esperada:
+# { "items": [], "total": 0, "page": 1, "size": 20, "pages": 1 }
+
+###
+
+# Paginación con filtro q=freno&size=1
+# @no-cookie-jar
+GET {{baseUrl}}/repuestos?q=freno&size=1
+Cookie: {{loginAdminC16.response.headers.Set-Cookie}}
+
+# Respuesta esperada:
+# { "total": 1, "page": 1, "size": 1, "pages": 1, "items": [...] }
+
+###
+
+# Pedir page=2 cuando solo hay 1 página -> 422
+# @no-cookie-jar
+GET {{baseUrl}}/repuestos?q=freno&size=1&page=2
+Cookie: {{loginAdminC16.response.headers.Set-Cookie}}
+
+# Respuesta esperada:
+# HTTP/1.1 422 Unprocessable Entity
+# { "detail": "La página 2 no existe: hay 1" }
+
+###
+
+# size=500 fuera de rango -> 422
+# @no-cookie-jar
+GET {{baseUrl}}/repuestos?size=500
+Cookie: {{loginAdminC16.response.headers.Set-Cookie}}
+
+# Respuesta esperada:
+# HTTP/1.1 422 Unprocessable Entity
+
+###
+
+# Intentar modificar stock por PATCH -> 422 (extra="forbid")
+# @no-cookie-jar
+PATCH {{baseUrl}}/repuestos/1
+Content-Type: application/json
+Cookie: {{loginAdminC16.response.headers.Set-Cookie}}
+
+{
+  "stock": 100
+}
+
+# Respuesta esperada:
+# HTTP/1.1 422 Unprocessable Entity
+# { "detail": "Extra inputs are not permitted" }
+
+
+### ------------------------------------------------------------------------------
+### CASO C-17: Catálogo de estados; filtrar órdenes por estado no declarado en contrato
+### ------------------------------------------------------------------------------
+
+# Sin sesión -> 401
+GET {{baseUrl}}/estados-orden
+
+# Respuesta esperada:
+# HTTP/1.1 401 Unauthorized
+
+###
+
+# @name loginAdminC17
+POST {{baseUrl}}/auth/login
+Content-Type: application/json
+
+{
+  "email": "admin@example.com",
+  "password": "Password123!"
+}
+
+###
+
+# Catálogo por posición -> 200
+# @no-cookie-jar
+GET {{baseUrl}}/estados-orden
+Cookie: {{loginAdminC17.response.headers.Set-Cookie}}
+
+# Respuesta esperada:
+# [
+#   { "codigo": "PENDIENTE", "posicion": 1, "es_final": false },
+#   { "codigo": "EN_REPARACION", "posicion": 2, "es_final": false },
+#   { "codigo": "TERMINADA", "posicion": 3, "es_final": true },
+#   { "codigo": "CANCELADA", "posicion": 4, "es_final": true }
+# ]
+
+###
+
+# Filtrar órdenes por estado no declarado -> 422
+# @no-cookie-jar
+GET {{baseUrl}}/ordenes?estado=NO_EXISTE
+Cookie: {{loginAdminC17.response.headers.Set-Cookie}}
+
+# Respuesta esperada:
+# HTTP/1.1 422 Unprocessable Entity
+
+
+### ------------------------------------------------------------------------------
+### CASO C-18: Cambiar precio de un repuesto y después sólo su descripción
+### ------------------------------------------------------------------------------
+
+# @name loginAdminC18
+POST {{baseUrl}}/auth/login
+Content-Type: application/json
+
+{
+  "email": "admin@example.com",
+  "password": "Password123!"
+}
+
+###
+
+# 1. Cambiar precio -> Agrega línea al historial
+# @no-cookie-jar
+PATCH {{baseUrl}}/repuestos/1
+Content-Type: application/json
+Cookie: {{loginAdminC18.response.headers.Set-Cookie}}
+
+{
+  "precio": "9500.00"
+}
+
+###
+
+# Consultar historial de precios
+# @no-cookie-jar
+GET {{baseUrl}}/repuestos/1/precios
+Cookie: {{loginAdminC18.response.headers.Set-Cookie}}
+
+# Respuesta esperada: 2 líneas en total
+
+###
+
+# 2. Cambiar sólo descripción -> No agrega línea al historial de precios
+# @no-cookie-jar
+PATCH {{baseUrl}}/repuestos/1
+Content-Type: application/json
+Cookie: {{loginAdminC18.response.headers.Set-Cookie}}
+
+{
+  "descripcion": "Filtro de aceite alto rendimiento"
+}
+
+###
+
+# Consultar historial de precios de nuevo -> Sigue teniendo exactamente 2 líneas
+# @no-cookie-jar
+GET {{baseUrl}}/repuestos/1/precios
+Cookie: {{loginAdminC18.response.headers.Set-Cookie}}
+
+
+### ------------------------------------------------------------------------------
+### CASO C-19: Dar de baja vehículo sin órdenes y registrar con misma patente
+### ------------------------------------------------------------------------------
+
+# @name loginAdminC19
+POST {{baseUrl}}/auth/login
+Content-Type: application/json
+
+{
+  "email": "admin@example.com",
+  "password": "Password123!"
+}
+
+###
+
+# Vehículo 2 de Laura (patente AA123BB) no tiene órdenes -> 204
+# @no-cookie-jar
+DELETE {{baseUrl}}/vehiculos/2
+Cookie: {{loginAdminC19.response.headers.Set-Cookie}}
+
+# Respuesta esperada:
+# HTTP/1.1 204 No Content
+
+###
+
+# Registrar misma patente AA123BB para Jorge (cliente_id=2) -> 201
+# @no-cookie-jar
+POST {{baseUrl}}/clientes/2/vehiculos
+Content-Type: application/json
+Cookie: {{loginAdminC19.response.headers.Set-Cookie}}
+
+{
+  "patente": "AA123BB",
+  "marca": "Volkswagen",
+  "modelo": "Gol Trend",
+  "anio": 2020
+}
+
+# Respuesta esperada:
+# HTTP/1.1 201 Created
+
+###
+
+# Intentar registrar una segunda patente activa idéntica -> 409
+# @no-cookie-jar
+POST {{baseUrl}}/clientes/1/vehiculos
+Content-Type: application/json
+Cookie: {{loginAdminC19.response.headers.Set-Cookie}}
+
+{
+  "patente": "AA123BB",
+  "marca": "Volkswagen",
+  "modelo": "Gol",
+  "anio": 2018
+}
+
+# Respuesta esperada:
+# HTTP/1.1 409 Conflict
+# { "detail": "Ya existe un vehículo activo registrado con la patente AA123BB" }

@@ -76,6 +76,9 @@ async def integrity_error_handler(
     )
 
 
+from fastapi.encoders import jsonable_encoder
+
+
 @app.exception_handler(RequestValidationError)
 async def validation_error_handler(
     request: Request, exc: RequestValidationError
@@ -84,14 +87,13 @@ async def validation_error_handler(
     Retorna 422 para errores de contrato o parámetros fuera de rango.
     """
     errors = exc.errors()
-    # Tomar el primer mensaje o listar detalle amigable
     first_msg = errors[0]["msg"] if errors else "Datos de entrada inválidos"
     if first_msg.startswith("Value error, "):
         first_msg = first_msg[len("Value error, "):]
 
     return JSONResponse(
         status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-        content={"detail": first_msg, "errors": errors},
+        content={"detail": first_msg, "errors": jsonable_encoder(errors)},
     )
 
 
