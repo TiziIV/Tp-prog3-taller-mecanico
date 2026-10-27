@@ -18,21 +18,7 @@ class ClientesService:
 
     async def crear_cliente(self, data: CrearClienteRequest) -> ClienteResponse:
         async with self.uow:
-            existente_doc = await self.uow.clientes.get_by_documento(data.documento)
-            if existente_doc:
-                raise HTTPException(
-                    status_code=status.HTTP_409_CONFLICT,
-                    detail="El documento ya pertenece a un cliente del taller",
-                )
-
-            if data.usuario_id is not None:
-                existente_user = await self.uow.clientes.get_by_usuario_id(data.usuario_id)
-                if existente_user:
-                    raise HTTPException(
-                        status_code=status.HTTP_409_CONFLICT,
-                        detail="El usuario ya posee una ficha de cliente asignada",
-                    )
-
+            # Unicidad garantizada exclusivamente por la base de datos (página 20)
             cliente = Cliente(
                 usuario_id=data.usuario_id,
                 nombre=data.nombre,
@@ -63,14 +49,8 @@ class ClientesService:
                     detail="Cliente no encontrado",
                 )
 
-            # Verificar si existe una patente vigente (RN-01 y RN-16)
-            existente = await self.uow.vehiculos.get_by_patente_activa(data.patente)
-            if existente:
-                raise HTTPException(
-                    status_code=status.HTTP_409_CONFLICT,
-                    detail=f"Ya existe un vehículo activo registrado con la patente {data.patente}",
-                )
-
+            # Unicidad de patente garantizada exclusivamente por el índice único parcial
+            # ix_vehiculo_patente_activa en la base de datos (página 20).
             vehiculo = Vehiculo(
                 cliente_id=cliente_id,
                 patente=data.patente,

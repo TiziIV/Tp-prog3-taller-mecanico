@@ -58,17 +58,36 @@ async def integrity_error_handler(
 ) -> JSONResponse:
     """
     Traduce errores de integridad de base de datos a un 409 con mensaje propio,
-    impidiendo la fuga de texto interno del esquema (RN-18, sección 4.13).
+    impidiendo la fuga de texto interno del esquema (RN-18, sección 4.13),
+    garantizando que la unicidad sea asegurada por la base de datos sin consultas previas.
     """
-    error_msg = "Conflicto de integridad de datos: la operación viola una restricción del sistema."
-    orig_text = str(exc.orig).lower() if hasattr(exc, "orig") else str(exc).lower()
+    de = getattr(exc.orig, "driver_exception", None)
+    constraint = (getattr(de, "constraint_name", "") or getattr(exc.orig, "constraint_name", "") or "").lower()
+    table = (getattr(de, "table_name", "") or "").lower()
+    raw_text = f"{str(exc)} {getattr(de, 'detail', '')}".lower()
 
-    if "unique" in orig_text or "duplicate key" in orig_text:
+    if "ix_usuario_email" in constraint or ("usuario" in table and "email" in raw_text) or "usuario_email_key" in constraint:
+        error_msg = "El correo electrónico ya se encuentra registrado"
+    elif "ix_cliente_documento" in constraint or ("cliente" in table and "documento" in raw_text) or "cliente_documento_key" in constraint:
+        error_msg = "El documento ya pertenece a un cliente del taller"
+    elif "ix_cliente_usuario_id" in constraint or ("cliente" in table and "usuario_id" in raw_text) or "cliente_usuario_id_key" in constraint:
+        error_msg = "El usuario ya posee una ficha de cliente asignada"
+    elif "ix_vehiculo_patente_activa" in constraint or "patente" in constraint or ("vehiculo" in table and "patente" in raw_text):
+        error_msg = "Ya existe un vehículo activo registrado con esa patente"
+    elif "ix_repuesto_codigo_activo" in constraint or "codigo" in constraint or ("repuesto" in table and "codigo" in raw_text):
+        error_msg = "El código de repuesto ya se encuentra registrado"
+    elif "ix_asignacion_rol_usuario_rol_vigente" in constraint or ("asignacion_rol" in table and "rol" in raw_text):
+        error_msg = "El usuario ya cuenta con una asignación vigente de ese rol"
+    elif "uq_item_orden_orden_repuesto" in constraint or ("item_orden" in table and "repuesto_id" in raw_text):
+        error_msg = "No se permiten repuestos repetidos en la orden"
+    elif "unique" in raw_text or "duplicate key" in raw_text or "llave duplicada" in raw_text or "unicidad" in raw_text:
         error_msg = "El registro ya existe o entra en conflicto con un dato existente."
-    elif "check constraint" in orig_text or "violates check" in orig_text:
-        error_msg = "Los valores proporcionados violan una regla de validación de la base de datos."
-    elif "foreign key" in orig_text or "violates foreign key" in orig_text:
+    elif "foreign key" in raw_text or "violates foreign key" in raw_text or "llave foránea" in raw_text:
         error_msg = "Referencia inválida: el recurso relacionado no existe."
+    elif "check constraint" in raw_text or "violates check" in raw_text or "restricción check" in raw_text:
+        error_msg = "Los valores proporcionados violan una regla de validación de la base de datos."
+    else:
+        error_msg = "Conflicto de integridad de datos: la operación viola una restricción del sistema."
 
     return JSONResponse(
         status_code=status.HTTP_409_CONFLICT,

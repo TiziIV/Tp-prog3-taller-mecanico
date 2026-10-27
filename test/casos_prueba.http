@@ -686,6 +686,62 @@ Cookie: {{loginLauraC13.response.headers.Set-Cookie}}
 # HTTP/1.1 403 Forbidden
 # { "detail": "No tiene permiso para cancelar esta orden" }
 
+###
+
+# Preparar orden 2 en estado TERMINADA (reponer stock y terminar con ADMIN)
+# @name loginAdminC13
+POST {{baseUrl}}/auth/login
+Content-Type: application/json
+
+{
+  "email": "admin@example.com",
+  "password": "Password123!"
+}
+
+###
+
+# @no-cookie-jar
+POST {{baseUrl}}/repuestos/3/reponer
+Content-Type: application/json
+Cookie: {{loginAdminC13.response.headers.Set-Cookie}}
+
+{
+  "cantidad": 10,
+  "motivo": "Reposición C-13"
+}
+
+###
+
+# @no-cookie-jar
+POST {{baseUrl}}/ordenes/2/terminar
+Cookie: {{loginAdminC13.response.headers.Set-Cookie}}
+
+# Respuesta esperada:
+# HTTP/1.1 200 OK
+# { "id": 2, "estado": "TERMINADA", ... }
+
+###
+
+# Intento de cancelar orden TERMINADA por cliente no dueño -> 403 antes que 409 (RN-12)
+# @no-cookie-jar
+POST {{baseUrl}}/ordenes/2/cancelar
+Cookie: {{loginLauraC13.response.headers.Set-Cookie}}
+
+# Respuesta esperada:
+# HTTP/1.1 403 Forbidden
+# { "detail": "No tiene permiso para cancelar esta orden" }
+
+###
+
+# Intento de cancelar orden TERMINADA por personal autorizado (ADMIN) -> 409 (RN-11)
+# @no-cookie-jar
+POST {{baseUrl}}/ordenes/2/cancelar
+Cookie: {{loginAdminC13.response.headers.Set-Cookie}}
+
+# Respuesta esperada:
+# HTTP/1.1 409 Conflict
+# { "detail": "No se puede cancelar una orden en estado TERMINADA" }
+
 
 ### ------------------------------------------------------------------------------
 ### CASO C-14: UPDATE y DELETE sobre las tres tablas de sólo agregado y estado inexistente
@@ -869,6 +925,33 @@ Cookie: {{loginAdminC18.response.headers.Set-Cookie}}
 # @no-cookie-jar
 GET {{baseUrl}}/repuestos/1/precios
 Cookie: {{loginAdminC18.response.headers.Set-Cookie}}
+
+###
+
+# 3. La recepción intenta hacer PATCH /repuestos/1 -> 403 Forbidden
+# @name loginRecepcionC18
+POST {{baseUrl}}/auth/login
+Content-Type: application/json
+
+{
+  "email": "recepcion@example.com",
+  "password": "Password123!"
+}
+
+###
+
+# @no-cookie-jar
+PATCH {{baseUrl}}/repuestos/1
+Content-Type: application/json
+Cookie: {{loginRecepcionC18.response.headers.Set-Cookie}}
+
+{
+  "precio": "10000.00"
+}
+
+# Respuesta esperada:
+# HTTP/1.1 403 Forbidden
+# { "detail": "Permiso denegado: se requiere uno de los roles ('ADMIN',)" }
 
 
 ### ------------------------------------------------------------------------------

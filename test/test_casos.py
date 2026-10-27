@@ -408,7 +408,7 @@ async def test_c12_reponer_y_terminar_orden():
 
 @pytest.mark.asyncio
 async def test_c13_cancelar_orden():
-    """C-13: El dueño cancela orden pendiente (200); ajena 403; terminada 409."""
+    """C-13: El dueño cancela orden pendiente (200); ajena 403; terminada 409 (y 403 antes que 409)."""
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         # Laura es dueña de orden 1
         res_laura = await client.post(
@@ -417,14 +417,39 @@ async def test_c13_cancelar_orden():
         )
         cookies_laura = res_laura.cookies
 
-        # Dueño cancela orden pendiente -> 200
+        # 1. Dueño cancela su propia orden pendiente -> 200
         res_canc = await client.post("/ordenes/1/cancelar", cookies=cookies_laura)
         assert res_canc.status_code == 200
         assert res_canc.json()["estado"] == "CANCELADA"
 
-        # Orden ajena (orden 2 de Jorge) -> 403
+        # 2. Orden ajena (orden 2 de Jorge, pendiente/en reparación) -> 403
         res_ajena = await client.post("/ordenes/2/cancelar", cookies=cookies_laura)
         assert res_ajena.status_code == 403
+
+        # 3. Preparar una orden TERMINADA (reponer stock y terminar orden 2 con ADMIN)
+        res_adm = await client.post(
+            "/auth/login",
+            json={"email": "admin@example.com", "password": "Password123!"},
+        )
+        cookies_adm = res_adm.cookies
+
+        await client.post(
+            "/repuestos/3/reponer",
+            json={"cantidad": 10, "motivo": "Reposición C-13"},
+            cookies=cookies_adm,
+        )
+        res_term = await client.post("/ordenes/2/terminar", cookies=cookies_adm)
+        assert res_term.status_code == 200
+        assert res_term.json()["estado"] == "TERMINADA"
+
+        # 4. Intento de cancelación de orden TERMINADA por un cliente no dueño -> 403 antes que 409 (RN-12)
+        res_ajena_term = await client.post("/ordenes/2/cancelar", cookies=cookies_laura)
+        assert res_ajena_term.status_code == 403
+
+        # 5. Intento de cancelación de orden TERMINADA por personal autorizado (ADMIN) -> 409 (RN-11)
+        res_adm_term = await client.post("/ordenes/2/cancelar", cookies=cookies_adm)
+        assert res_adm_term.status_code == 409
+        assert "no se puede cancelar una orden en estado terminada" in res_adm_term.json()["detail"].lower()
 
 
 @pytest.mark.asyncio
@@ -529,6 +554,20 @@ async def test_c18_cambio_precio_e_historial():
         # Historial de precios NO debe agregar ninguna fila
         res_hist2 = await client.get("/repuestos/1/precios", cookies=cookies)
         assert len(res_hist2.json()) == 2
+
+        # 3. La recepción intenta hacer PATCH /repuestos/1 -> 403 Forbidden
+        res_rec = await client.post(
+            "/auth/login",
+            json={"email": "recepcion@example.com", "password": "Password123!"},
+        )
+        cookies_rec = res_rec.cookies
+
+        res_patch_rec = await client.patch(
+            "/repuestos/1",
+            json={"precio": "10000.00"},
+            cookies=cookies_rec,
+        )
+        assert res_patch_rec.status_code == 403
 
 
 @pytest.mark.asyncio

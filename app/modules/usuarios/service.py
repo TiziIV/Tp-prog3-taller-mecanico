@@ -63,22 +63,8 @@ class UsuariosService:
         hashed_password = await get_password_hash(data.password)
 
         async with self.uow:
-            # RN-01 y RN-02: Verificar unicidad antes o dejar que la base lo garantice,
-            # pero respondiendo 409 con mensaje propio sin apropiarse de ficha existente.
-            existente_usuario = await self.uow.usuarios.get_by_email(data.email)
-            if existente_usuario:
-                raise HTTPException(
-                    status_code=status.HTTP_409_CONFLICT,
-                    detail="El correo electrónico ya se encuentra registrado",
-                )
-
-            existente_cliente = await self.uow.clientes.get_by_documento(data.documento)
-            if existente_cliente:
-                raise HTTPException(
-                    status_code=status.HTTP_409_CONFLICT,
-                    detail="El documento ya pertenece a un cliente del taller",
-                )
-
+            # RN-01 y RN-02: Unicidad garantizada exclusivamente por la base de datos (página 20),
+            # sin verificación previa por consulta. La base dispara IntegrityError (409).
             now = datetime.now(timezone.utc)
             usuario = Usuario(
                 email=data.email,
@@ -255,13 +241,7 @@ class UsuariosService:
         hashed_password = await get_password_hash(data.password_provisoria)
 
         async with self.uow:
-            existente = await self.uow.usuarios.get_by_email(data.email)
-            if existente:
-                raise HTTPException(
-                    status_code=status.HTTP_409_CONFLICT,
-                    detail="El correo electrónico ya se encuentra registrado",
-                )
-
+            # Unicidad garantizada exclusivamente por la base de datos (página 20)
             now = datetime.now(timezone.utc)
             usuario = Usuario(
                 email=data.email,
@@ -306,16 +286,11 @@ class UsuariosService:
                 raise HTTPException(status_code=404, detail="Usuario no encontrado")
 
             now = datetime.now(timezone.utc)
-            # Verificar si existe una asignación abierta para ese rol (RN-03)
+            # Si existía una asignación previa ya vencida, se cierra para permitir la nueva (RN-03).
+            # Si sigue vigente, el índice único parcial ix_asignacion_rol_usuario_rol_vigente
+            # disparará IntegrityError directamente en la base de datos.
             abierta = await self.uow.roles.get_asignacion_abierta(usuario_id, data.rol.value)
-            if abierta:
-                # Si está abierta y vigente, conflicto 409
-                if abierta.vence_en is None or abierta.vence_en > now:
-                    raise HTTPException(
-                        status_code=status.HTTP_409_CONFLICT,
-                        detail=f"El usuario ya cuenta con una asignación vigente del rol {data.rol.value}",
-                    )
-                # Si ya venció, se revoca la anterior para dar paso a la nueva
+            if abierta and abierta.vence_en is not None and abierta.vence_en <= now:
                 abierta.revocada_en = now
                 await self.uow.roles.update(abierta)
 

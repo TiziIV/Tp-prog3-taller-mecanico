@@ -45,13 +45,7 @@ class RepuestosService:
         self, data: CrearRepuestoRequest, admin: Usuario
     ) -> RepuestoResponse:
         async with self.uow:
-            existente = await self.uow.repuestos.get_by_codigo_activo(data.codigo)
-            if existente:
-                raise HTTPException(
-                    status_code=status.HTTP_409_CONFLICT,
-                    detail=f"Ya existe un repuesto activo con el código '{data.codigo}'",
-                )
-
+            # Unicidad de código garantizada exclusivamente por la base de datos (página 20)
             repuesto = Repuesto(
                 codigo=data.codigo,
                 descripcion=data.descripcion,
